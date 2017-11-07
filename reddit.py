@@ -1,6 +1,6 @@
 #!/usr/bin/python3.5
 
-from imgurdownloader.imgurdownloader import ImgurDownloader
+from imgurdownloader import ImgurDownloader
 import requests
 import urllib.request
 import argparse
@@ -29,6 +29,7 @@ class FileData(peewee.Model):
   class Meta:
     database = db
 
+
 # https://stackoverflow.com/a/3431838
 def md5(fname):
   hash_md5 = hashlib.md5()
@@ -56,34 +57,49 @@ def bestUrl(list1, list2, urls):
         slist2.append(i2)
   return slist2[0]
 
+def checkDupeHash(filepath):
+  filehash = md5(filepath)
+  try:
+    FileData.select().where(FileData.md5 == filehash).get()
+    return "{}: {} hash already exists in db".format(filename, filehash)
+  except:
+    raise
+
+def checkDupeFilename(filename):
+  try:
+    FileData.select().where(FileData.filename == filename).get()
+    return "{}: filename already exists in db".format(filename)
+  except:
+    raise
+
+
+def addFiletoDB(user, filename, dltype):
+  filehash = md5(user + "/" + dltype + "/" + filename)
+  FileData(user=user, md5=filehash, filename=filename, filetype=dltype).save()
+
 
 def downloadFile(url, filename, user, dltype):
   filedest = os.path.join(user + "/" + dltype + "/" + filename)
-  if glob.glob(filedest + "*"):
-    print ("{}: {} already exists".format(dltype, filename))
-    return
-  else:
+  if not glob.glob(filedest + "*"):
     try:
-      FileData.select().where(FileData.filename == filename).get()
-      print ("{}: {} already exists in db".format(dltype, filename))
+      checkDupeFilename(filename)
       return
     except:
       try:
         urllib.request.urlretrieve (url, "/tmp/" + filename)
-        filehash = md5("/tmp/" + filename)
         try:
-          FileData.select().where(FileData.md5 == filehash).get()
-          print ("{}: {} hash already exists in db".format(dltype, filename))
-          FileData(user=user, md5=filehash, filename=filename, filetype=dltype).save()
-          return
+          checkDupeHash("/tmp/" + filename)
+          os.remove("/tmp/" + filename)
         except:
           verifyCreateDir(user, dltype)
           print ("Downloading to {}: {}".format(filedest, url))
           shutil.move("/tmp/" + filename, filedest)
-          FileData(user=user, md5=filehash, filename=filename, filetype=dltype).save()
-      except:
-        print ("Failed {}: {}".format(dltype, e))
+          addFiletoDB(user, filename, dltype)
+      except Exception as e:
+        print ("Failed url {}: {}".format(url, e))
         pass
+  else:
+    print ("{}: {} already exists".format(dltype, filename))
 
 
 def imgurDownload(url, user):
