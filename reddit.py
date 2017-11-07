@@ -29,7 +29,7 @@ class FileData(peewee.Model):
   class Meta:
     database = db
 
-
+# https://stackoverflow.com/a/3431838
 def md5(fname):
   hash_md5 = hashlib.md5()
   with open(fname, "rb") as f:
