@@ -59,9 +59,11 @@ def bestUrl(list1, list2, urls):
 
 def checkDupeHash(filepath):
   filehash = md5(filepath)
+  if filehash == "d835884373f4d6c8f24742ceabe74946":
+    return "{}: is imgur 404 image".format(filepath)
   try:
     FileData.select().where(FileData.md5 == filehash).get()
-    return "{}: {} hash already exists in db".format(filename, filehash)
+    return "{}: {} hash already exists in db".format(filepath, filehash)
   except:
     raise
 
@@ -82,22 +84,18 @@ def downloadFile(url, filename, user, dltype):
   filedest = os.path.join(user + "/" + dltype + "/" + filename)
   if not glob.glob(filedest + "*"):
     try:
-      checkDupeFilename(filename)
-      return
-    except:
+      urllib.request.urlretrieve (url, "/tmp/" + filename)
       try:
-        urllib.request.urlretrieve (url, "/tmp/" + filename)
-        try:
-          checkDupeHash("/tmp/" + filename)
-          os.remove("/tmp/" + filename)
-        except:
-          verifyCreateDir(user, dltype)
-          print ("Downloading to {}: {}".format(filedest, url))
-          shutil.move("/tmp/" + filename, filedest)
-          addFiletoDB(user, filename, dltype)
-      except Exception as e:
-        print ("Failed url {}: {}".format(url, e))
-        pass
+        print(checkDupeHash("/tmp/" + filename))
+        os.remove("/tmp/" + filename)
+      except:
+        verifyCreateDir(user, dltype)
+        print ("Downloading to {}: {}".format(filedest, url))
+        shutil.move("/tmp/" + filename, filedest)
+        addFiletoDB(user, filename, dltype)
+    except Exception as e:
+      print ("Failed url {}: {}".format(url, e))
+      pass
   else:
     print ("{}: {} already exists".format(dltype, filename))
 
@@ -109,15 +107,12 @@ def imgurDownload(url, user):
     if downloader.num_images() == 1:
       verifyCreateDir(user, "images")
       if any(x in url for x in vids) or any(x in str(downloader.list_extensions()) for x in vids):
-        folder = "videos"
+        dltype = "videos"
       else:
-        folder = "images"
-      try:
-        filename = downloader.save_images(user + "/" + folder + "/" )
-        print ("Downloading to {}: {}".format(user + "/" + folder + "/" + filename[0][0], url))
-      except Exception as e:
-        print ("Imgur single: {}".format(e))
-        pass
+        dltype = "images"
+      filename = downloader.json_imageIDs[0][0] + downloader.json_imageIDs[0][1]
+      url = "https://i.imgur.com/" + filename
+      downloadFile(url, filename, user, dltype)
     else:
       try:
         downloader.save_images(user + "/albums/" + downloader.get_album_key())
