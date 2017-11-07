@@ -57,15 +57,17 @@ def bestUrl(list1, list2, urls):
         slist2.append(i2)
   return slist2[0]
 
+
 def checkDupeHash(filepath):
   filehash = md5(filepath)
   if filehash == "d835884373f4d6c8f24742ceabe74946":
-    return "{}: is imgur 404 image".format(filepath)
+    return "{}: is imgur 404 image".format(filepath.split(r'/')[-1])
   try:
     FileData.select().where(FileData.md5 == filehash).get()
     return "{}: {} hash already exists in db".format(filepath, filehash)
   except:
     raise
+
 
 def checkDupeFilename(filename):
   try:
@@ -110,7 +112,13 @@ def imgurDownload(url, user):
         dltype = "videos"
       else:
         dltype = "images"
-      filename = downloader.json_imageIDs[0][0] + downloader.json_imageIDs[0][1]
+      if downloader.imageIDs[0][0] == "":
+        filename = url.split(r'/')[-1]
+      else:
+        if "gif" in downloader.imageIDs[0][1]:
+          filename = downloader.imageIDs[0][0] + ".mp4"
+        else:
+          filename = downloader.imageIDs[0][0] + downloader.imageIDs[0][1]
       url = "https://i.imgur.com/" + filename
       downloadFile(url, filename, user, dltype)
     else:
@@ -144,6 +152,7 @@ def gfycatDownload(url, user):
     downloadFile(dlurl, dlurl.split(r'/')[-1], user, "videos")
   else:
     print ("html error: {} {}".format(html.status_code, html.reason))
+
 
 def reddituploadsDownload(url, user):
   try:
