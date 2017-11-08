@@ -13,6 +13,8 @@ import json
 import peewee
 import hashlib
 import shutil
+import itertools
+from multiprocessing.dummy import Pool as ThreadPool
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user")
@@ -187,6 +189,20 @@ def eromeDownload(url, user):
           downloadFile("https:" + source['src'], source['src'].split(r'/')[-1], user, "videos")
           return
 
+def splitJobs(user, url):
+  if "imgur" in url:
+    imgurDownload(url, user)
+  elif "i.redd.it" in i:
+    downloadFile(url, url.split(r'/')[-1], user, "images")
+  elif "gfycat" in url:
+    gfycatDownload(url, user)
+  elif "pornhub" in url:
+    pornhubDownload(url, user)
+  elif "erome" in url:
+    eromeDownload(url, user)
+  elif "reddituploads.com" in url:
+    reddituploadsDownload(url, user)
+
 
 print("Building URL list.")
 r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ')&sort=created_utc:desc&size=100', headers={'User-Agent': 'botman 1.0'})
@@ -208,16 +224,9 @@ while r.json()['hits']['total'] > 0:
 
 print("Discovered {} urls, beginning download..".format(len(urls)))
 
-for i in urls:
-  if "imgur" in i:
-    imgurDownload(i, args.user)
-  elif "i.redd.it" in i:
-    downloadFile(i, i.split(r'/')[-1], args.user, "images")
-  elif "gfycat" in i:
-    gfycatDownload(i, args.user)
-  elif "pornhub" in i:
-    pornhubDownload(i, args.user)
-  elif "erome" in i:
-    eromeDownload(i, args.user)
-  elif "reddituploads.com" in i:
-    reddituploadsDownload(i, args.user)
+pool = ThreadPool(8)
+
+pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
+
+pool.close()
+pool.join()
