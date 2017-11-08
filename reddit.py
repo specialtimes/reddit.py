@@ -43,7 +43,10 @@ def md5(fname):
 
 def verifyCreateDir(user, dltype):
   if not os.path.exists(user + "/" + dltype):
-    os.makedirs(user + "/" + dltype)
+    try:
+      os.makedirs(user + "/" + dltype)
+    except:
+      pass
 
 
 def bestUrl(list1, list2, urls):
@@ -106,6 +109,7 @@ def downloadFile(url, filename, user, dltype):
 
 def imgurDownload(url, user):
   vids = [ "gif", "gifv", "mp4" ]
+  verifyCreateDir(user, "images")
   try:
     downloader = ImgurDownloader(url)
     if downloader.num_images() == 1:
@@ -187,12 +191,30 @@ def eromeDownload(url, user):
       for source in soup(["source"]):
         if i == source['res']:
           downloadFile("https:" + source['src'], source['src'].split(r'/')[-1], user, "videos")
-          return
+
+
+def undefinedDownload(url, user):
+  vids = [ "gif", "gifv", "mp4" ]
+  url = re.sub('amp;', '', url)
+  try:
+    html = requests.head(url)
+    try:
+      html.headers['content-type']
+      if "text" not in html.headers['content-type'].lower():
+        if any(x in html.headers['content-type'] for x in vids):
+          dltype = "videos"
+        else:
+          dltype = "images"
+        downloadFile(url, url.split(r'/')[-1].split(r'.')[0] + "." + html.headers['content-type'].split(r'/')[-1], user, dltype)
+    except:
+      pass
+  except:
+    pass
 
 def splitJobs(user, url):
   if "imgur" in url:
     imgurDownload(url, user)
-  elif "i.redd.it" in i:
+  elif "i.redd.it" in url:
     downloadFile(url, url.split(r'/')[-1], user, "images")
   elif "gfycat" in url:
     gfycatDownload(url, user)
@@ -202,6 +224,8 @@ def splitJobs(user, url):
     eromeDownload(url, user)
   elif "reddituploads.com" in url:
     reddituploadsDownload(url, user)
+  else:
+    undefinedDownload(url, user)
 
 
 print("Building URL list.")
@@ -224,6 +248,7 @@ while r.json()['hits']['total'] > 0:
 
 print("Discovered {} urls, beginning download..".format(len(urls)))
 
+# https://stackoverflow.com/a/28463266
 pool = ThreadPool(8)
 
 pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
