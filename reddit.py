@@ -14,7 +14,11 @@ import peewee
 import hashlib
 import shutil
 import itertools
+import logging
+import time
 from multiprocessing.dummy import Pool as ThreadPool
+
+logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user")
@@ -66,10 +70,10 @@ def bestUrl(list1, list2, urls):
 def checkDupeHash(filepath):
   filehash = md5(filepath)
   if filehash == "d835884373f4d6c8f24742ceabe74946":
-    return "{}: is imgur 404 image".format(filepath.split(r'/')[-1])
+    return "IMGUR_404: {}".format(filepath.split(r'/')[-1])
   try:
     FileData.select().where(FileData.md5 == filehash).get()
-    return "{}: {} hash already exists in db".format(filepath, filehash)
+    return "IMAGE_HASH_EXISTS: {}".format(filehash)
   except:
     raise
 
@@ -77,7 +81,7 @@ def checkDupeHash(filepath):
 def checkDupeFilename(filename):
   try:
     FileData.select().where(FileData.filename == filename).get()
-    return "{}: filename already exists in db".format(filename)
+    return "{}: file already exists".format(filename)
   except:
     raise
 
@@ -89,27 +93,28 @@ def addFiletoDB(user, filename, dltype):
 
 def downloadFile(url, filename, user, dltype):
   filedest = os.path.join(user + "/" + dltype + "/" + filename)
-  if not glob.glob(filedest + "*"):
+  if not glob.glob(re.sub('\.[^.]*$', '', filedest) + "*"):
     try:
       urllib.request.urlretrieve (url, "/tmp/" + filename)
+      logging.info(filename)
       try:
-        print(checkDupeHash("/tmp/" + filename))
+        logging.info(checkDupeHash("/tmp/" + filename))
         os.remove("/tmp/" + filename)
       except:
         verifyCreateDir(user, dltype)
-        print ("Downloading to {}: {}".format(filedest, url))
+        print ("Downloading to: {} From: {}".format(filedest, url))
+        logging.info("FILE_DOWNLOAD: {}".format(user + "/" + dltype + "/" + filename))
         shutil.move("/tmp/" + filename, filedest)
         addFiletoDB(user, filename, dltype)
     except Exception as e:
-      print ("Failed url {}: {}".format(url, e))
+      logging.info("FAILED_DOWNLOAD_URL: {} EXCEPTION: {}".format(url, e))
       pass
   else:
-    print ("{}: {} already exists".format(dltype, filename))
+    logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + filename))
 
 
 def imgurDownload(url, user):
   vids = [ "gif", "gifv", "mp4" ]
-  verifyCreateDir(user, "images")
   try:
     downloader = ImgurDownloader(url)
     if downloader.num_images() == 1:
@@ -127,15 +132,22 @@ def imgurDownload(url, user):
           filename = downloader.imageIDs[0][0] + downloader.imageIDs[0][1]
       url = "https://i.imgur.com/" + filename
       downloadFile(url, filename, user, dltype)
+    elif downloader.num_images() == 0:
+      logging.info("IMGUR_EMPTY_ALBUM: {}".format(url))
+      return
     else:
-      try:
-        downloader.save_images(user + "/albums/" + downloader.get_album_key())
-        print ("Downloading to album: {}".format(url))
-      except Exception as e:
-        print ("Imgur album: {}".format(e))
-        pass
+      if not os.path.exists(user + "/albums/" + downloader.get_album_key()):
+        try:
+          downloader.save_images(user + "/albums/" + downloader.get_album_key())
+          print ("Downloading to: {} From: {}".format(user + "/albums/" + downloader.get_album_key(), url))
+          logging.info("IMGUR_ALBUM_DOWNLOAD: {}".format(url))
+        except Exception as e:
+          logging.info("IMGUR_ALBUM_EXCEPTION: {}".format(e))
+          pass
+      else:
+        logging.info("ALBUM_EXISTS: {}".format(user + "/albums/" + downloader.get_album_key()))
   except Exception as e:
-    print ("Imgur main: {}".format(e))
+    logging.info("IMGUR_EXCEPTION: {}".format(e))
     pass
 
 
@@ -157,14 +169,14 @@ def gfycatDownload(url, user):
     dlurl = bestUrl(gfycathost, gfycatformat, itemlist)
     downloadFile(dlurl, dlurl.split(r'/')[-1], user, "videos")
   else:
-    print ("html error: {} {}".format(html.status_code, html.reason))
+    logging.info("USER: {} URL: {} STATUS_CODE: {} REASON: {}".format(user, url, html.status_code, html.reason))
 
 
 def reddituploadsDownload(url, user):
   try:
     downloadFile(re.sub('amp;', '', url), re.findall('.com\/(.*)\?', url)[0], user, "images")
     ext = subprocess.run(['file','--brief','--mime-type', user + "/images/" + re.findall('.com\/(.*)\?', url)[0]], stdout=subprocess.PIPE)
-    os.rename(user + "/images/" + re.findall('.com\/(.*)\?', url)[0], user + "/images/" + re.findall('.com\/(.*)\?', i)[0] + "." + bytes.decode(ext.stdout.split(b'\n')[0].split(b'/')[1]))
+    os.rename(user + "/images/" + re.findall('.com\/(.*)\?', url)[0], user + "/images/" + re.findall('.com\/(.*)\?', url)[0] + "." + bytes.decode(ext.stdout.split(b'\n')[0].split(b'/')[1]))
   except:
     pass
 
@@ -194,14 +206,13 @@ def eromeDownload(url, user):
 
 
 def undefinedDownload(url, user):
-  vids = [ "gif", "gifv", "mp4" ]
   url = re.sub('amp;', '', url)
   try:
-    html = requests.head(url)
+    html = requests.head(url, timeout=5)
     try:
       html.headers['content-type']
       if "text" not in html.headers['content-type'].lower():
-        if any(x in html.headers['content-type'] for x in vids):
+        if any(x in html.headers['content-type'] for x in [ "gif", "gifv", "mp4" ]):
           dltype = "videos"
         else:
           dltype = "images"
@@ -227,7 +238,7 @@ def splitJobs(user, url):
   else:
     undefinedDownload(url, user)
 
-
+timestart = time.time()
 print("Building URL list.")
 r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ')&sort=created_utc:desc&size=100', headers={'User-Agent': 'botman 1.0'})
 urls = []
@@ -246,12 +257,17 @@ while r.json()['hits']['total'] > 0:
           urls.append(i)
   r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:<' + str(post['_source']['created_utc']) + ')&sort=created_utc:desc&size=100', headers={'User-Agent': 'botman 1.0'})
 
-print("Discovered {} urls, beginning download..".format(len(urls)))
+print("Discovered {} urls for {}, beginning download..".format(len(urls), args.user))
+
+logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
 
 # https://stackoverflow.com/a/28463266
-pool = ThreadPool(8)
-
-pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
-
-pool.close()
-pool.join()
+if __name__ == '__main__':
+  pool = ThreadPool(4)
+  
+  pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
+  
+  pool.close()
+  pool.join()
+  
+  logging.info("Processing complete, took {}".format(time.time()-timestart))
