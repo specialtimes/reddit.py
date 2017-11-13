@@ -35,6 +35,12 @@ class FileData(peewee.Model):
   class Meta:
     database = db
 
+class UserData(peewee.Model):
+  user = peewee.CharField()
+  latest = peewee.CharField()
+  class Meta:
+    database = db
+
 
 # https://stackoverflow.com/a/3431838
 def md5(fname):
@@ -205,6 +211,22 @@ def eromeDownload(url, user):
           downloadFile("https:" + source['src'], source['src'].split(r'/')[-1], user, "videos")
 
 
+def findIndexStart(user):
+  try:
+    return UserData.select().where(UserData.user == user).get().latest
+  except:
+    return "0"
+
+
+def updateLatest(user, latest):
+  try:
+    record = UserData.select().where(UserData.user == user).get()
+    record.latest = latest
+    record.save()
+  except:
+    record = UserData(user=user, latest=latest).save()
+
+
 def undefinedDownload(url, user):
   url = re.sub('amp;', '', url)
   try:
@@ -240,7 +262,8 @@ def splitJobs(user, url):
 
 timestart = time.time()
 print("Building URL list.")
-r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ')&sort=created_utc:desc&size=100', headers={'User-Agent': 'botman 1.0'})
+startUTC = findIndexStart(args.user)
+r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + startUTC + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
 urls = []
 
 while r.json()['hits']['total'] > 0:
@@ -252,22 +275,29 @@ while r.json()['hits']['total'] > 0:
     if url:
       for i in url:
         i = i.replace("http://", "https://")
-        i = re.sub('[)!?,.:]{1,2}$', '', i)
+        i = re.sub('[)!?,*.:]{1,3}$', '', i)
         if i not in urls:
           urls.append(i)
-  r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:<' + str(post['_source']['created_utc']) + ')&sort=created_utc:desc&size=100', headers={'User-Agent': 'botman 1.0'})
+  r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + str(post['_source']['created_utc']) + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
 
-print("Discovered {} urls for {}, beginning download..".format(len(urls), args.user))
 
-logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
+if len(urls) > 0:
+  print("Discovered {} new urls for {}, beginning download..".format(len(urls), args.user))
+    
+  logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
+  
+  # https://stackoverflow.com/a/28463266
+  if __name__ == '__main__':
+    pool = ThreadPool(4)
+    
+    pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
+    
+    pool.close()
+    pool.join()
+    
+    logging.info("Processing complete, took {}".format(time.time()-timestart))
+  
+  updateLatest(args.user, str(post['_source']['created_utc']))
 
-# https://stackoverflow.com/a/28463266
-if __name__ == '__main__':
-  pool = ThreadPool(4)
-  
-  pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
-  
-  pool.close()
-  pool.join()
-  
-  logging.info("Processing complete, took {}".format(time.time()-timestart))
+else:
+  print("No new objects found.")
