@@ -18,12 +18,15 @@ import logging
 import time
 from multiprocessing.dummy import Pool as ThreadPool
 
-logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='reddit.log',level=logging.INFO)
+logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/path/to/logs/reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("user")
+parser.add_argument("user", help="Username to scan")
+parser.add_argument("--web", action="store_true", help="Output scan information in html format.")
 
 args = parser.parse_args()
+
+homeurl = "https://your.website.com"
 
 db = peewee.MySQLDatabase("reddit", host="localhost", user="reddit", passwd="reddit")
 
@@ -34,6 +37,7 @@ class FileData(peewee.Model):
   filetype = peewee.CharField()
   class Meta:
     database = db
+
 
 class UserData(peewee.Model):
   user = peewee.CharField()
@@ -108,7 +112,7 @@ def downloadFile(url, filename, user, dltype):
         os.remove("/tmp/" + filename)
       except:
         verifyCreateDir(user, dltype)
-        print ("Downloading to: {} From: {}".format(filedest, url))
+        printDownload(user, dltype, filename)
         logging.info("FILE_DOWNLOAD: {}".format(user + "/" + dltype + "/" + filename))
         shutil.move("/tmp/" + filename, filedest)
         addFiletoDB(user, filename, dltype)
@@ -145,7 +149,7 @@ def imgurDownload(url, user):
       if not os.path.exists(user + "/albums/" + downloader.get_album_key()):
         try:
           downloader.save_images(user + "/albums/" + downloader.get_album_key())
-          print ("Downloading to: {} From: {}".format(user + "/albums/" + downloader.get_album_key(), url))
+          printDownload(user, "albums", downloader.get_album_key())
           logging.info("IMGUR_ALBUM_DOWNLOAD: {}".format(url))
         except Exception as e:
           logging.info("IMGUR_ALBUM_EXCEPTION: {}".format(e))
@@ -244,6 +248,14 @@ def undefinedDownload(url, user):
   except:
     pass
 
+
+def printDownload(user, dltype, filename):
+  if args.web:
+    print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
+  else:
+    print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + filename)
+
+
 def splitJobs(user, url):
   if "imgur" in url:
     imgurDownload(url, user)
@@ -260,12 +272,11 @@ def splitJobs(user, url):
   else:
     undefinedDownload(url, user)
 
+
 timestart = time.time()
-print("Building URL list.")
 startUTC = findIndexStart(args.user)
 r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + startUTC + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
 urls = []
-
 while r.json()['hits']['total'] > 0:
   for post in r.json()['hits']['hits']:
     if post['_type'] == "comments":
@@ -279,25 +290,13 @@ while r.json()['hits']['total'] > 0:
         if i not in urls:
           urls.append(i)
   r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + str(post['_source']['created_utc']) + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
-
-
 if len(urls) > 0:
-  print("Discovered {} new urls for {}, beginning download..".format(len(urls), args.user))
-    
   logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
-  
   # https://stackoverflow.com/a/28463266
   if __name__ == '__main__':
     pool = ThreadPool(4)
-    
     pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
-    
     pool.close()
     pool.join()
-    
     logging.info("Processing complete, took {}".format(time.time()-timestart))
-  
   updateLatest(args.user, str(post['_source']['created_utc']))
-
-else:
-  print("No new objects found.")
