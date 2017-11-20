@@ -18,7 +18,7 @@ import logging
 import time
 from multiprocessing.dummy import Pool as ThreadPool
 
-logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/path/to/logs/reddit.log',level=logging.INFO)
+logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user", help="Username to scan")
@@ -26,7 +26,7 @@ parser.add_argument("--web", action="store_true", help="Output scan information 
 
 args = parser.parse_args()
 
-homeurl = "https://your.website.com"
+homeurl = ""
 
 db = peewee.MySQLDatabase("reddit", host="localhost", user="reddit", passwd="reddit")
 
@@ -81,6 +81,8 @@ def checkDupeHash(filepath):
   filehash = md5(filepath)
   if filehash == "d835884373f4d6c8f24742ceabe74946":
     return "IMGUR_404: {}".format(filepath.split(r'/')[-1])
+  elif filehash == "04e48b146ef845020acac2873b49f80d":
+    return "VIDBLE_404: {}".format(filepath.split(r'/')[-1])
   try:
     FileData.select().where(FileData.md5 == filehash).get()
     return "IMAGE_HASH_EXISTS: {}".format(filehash)
@@ -96,31 +98,52 @@ def checkDupeFilename(filename):
     raise
 
 
+def verifyCreateAlbumDir(user, album):
+  if not os.path.exists(user + "/albums/" + album):
+    try:
+      os.makedirs(user + "/albums/" + album)
+    except:
+      pass
+
+
 def addFiletoDB(user, filename, dltype):
   filehash = md5(user + "/" + dltype + "/" + filename)
   FileData(user=user, md5=filehash, filename=filename, filetype=dltype).save()
 
 
-def downloadFile(url, filename, user, dltype):
-  filedest = os.path.join(user + "/" + dltype + "/" + filename)
+def downloadFile(url, filename, user, dltype, album=None):
+
+  if album is None:
+    filedest = os.path.join(user + "/" + dltype + "/" + filename)
+  else:
+    filedest = os.path.join(user + "/albums/" + album + "/" + filename)
   if not glob.glob(re.sub('\.[^.]*$', '', filedest) + "*"):
     try:
-      urllib.request.urlretrieve (url, "/tmp/" + filename)
-      logging.info(filename)
+      urllib.request.urlretrieve(url, "/tmp/" + filename)
       try:
         logging.info(checkDupeHash("/tmp/" + filename))
         os.remove("/tmp/" + filename)
       except:
-        verifyCreateDir(user, dltype)
-        printDownload(user, dltype, filename)
-        logging.info("FILE_DOWNLOAD: {}".format(user + "/" + dltype + "/" + filename))
+        if album is None:
+          verifyCreateDir(user, dltype)
+          printDownload(user, dltype, filename)
+          logging.info("FILE_DOWNLOAD: {}".format(user + "/" + dltype + "/" + filename))
+        else:
+          verifyCreateAlbumDir(user, album)
+          printDownload(user, dltype, filename, album)
+          logging.info("FILE_DOWNLOAD: {}".format(user + "/" + dltype + "/" + album + "/" + filename))
         shutil.move("/tmp/" + filename, filedest)
         addFiletoDB(user, filename, dltype)
     except Exception as e:
       logging.info("FAILED_DOWNLOAD_URL: {} EXCEPTION: {}".format(url, e))
+      if os.path.isfile("/tmp/" + filename)
+        os.remove("/tmp/" + filename)
       pass
   else:
-    logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + filename))
+    if album is None:
+      logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + filename))
+    else:
+      logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + album + "/" + filename))
 
 
 def imgurDownload(url, user):
@@ -230,6 +253,34 @@ def updateLatest(user, latest):
   except:
     record = UserData(user=user, latest=latest).save()
 
+def ibbcoDownload(url, user):
+  html = requests.get(url)
+  if html.ok:
+    soup = BeautifulSoup(html.content, "html5lib")
+    for link in soup(['link']):
+      if "image.ibb" in link.attrs['href']:
+        downloadFile(link.attrs['href'], link.attrs['href'].split(r'/')[-1], user, "images")
+
+
+def vidbleDownload(url, user):
+  try:
+    html = requests.get(url, timeout=10)
+    if html.ok:
+      time.sleep(10)
+      if "text/html" not in html.headers['content-type'].lower():
+        downloadFile(url, url.split(r'/')[-1].split(r'.')[0] + "." + html.headers['content-type'].split(r'/')[-1], user, "images")
+      else:
+        soup = BeautifulSoup(html.content, "html5lib")
+        for i in soup.findAll('img'):
+          try:
+            if i.attrs['src']:
+              downloadFile("https://vidble.com" + re.sub('_(.?).', '', i.attrs['src']), re.sub('_(.?).', '', i.attrs['src']).replace("/", ""), user, "albums", url.split(r'/')[-1])
+          except:
+            pass
+  except Exception as e:
+    logging.info("VIDBLE_EXCEPTION: {}".format(e))
+    pass
+  
 
 def undefinedDownload(url, user):
   url = re.sub('amp;', '', url)
@@ -242,18 +293,27 @@ def undefinedDownload(url, user):
           dltype = "videos"
         else:
           dltype = "images"
+        logging.info("UNKNOWN_HOST_BINARY: USER: {} URL: {}".format(user, url))
         downloadFile(url, url.split(r'/')[-1].split(r'.')[0] + "." + html.headers['content-type'].split(r'/')[-1], user, dltype)
+      else:
+        logging.info("UNKNOWN_HOST_ASCII: USER: {} URL: {}".format(user, url))
     except:
       pass
   except:
     pass
 
 
-def printDownload(user, dltype, filename):
-  if args.web:
-    print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
+def printDownload(user, dltype, filename, album=None):
+  if album is None:
+    if args.web:
+      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
+    else:
+      print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename)
   else:
-    print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + filename)
+    if args.web:
+      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
+    else:
+      print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + filename)
 
 
 def splitJobs(user, url):
@@ -269,6 +329,12 @@ def splitJobs(user, url):
     eromeDownload(url, user)
   elif "reddituploads.com" in url:
     reddituploadsDownload(url, user)
+  elif "i.redditmedia.com" in url:
+    reddituploadsDownload(url, user)
+  elif "ibb.co" in url:
+    ibbcoDownload(url, user)
+  elif "vidble.com" in url:
+    vidbleDownload(url, user)
   else:
     undefinedDownload(url, user)
 
