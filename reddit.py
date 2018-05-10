@@ -16,17 +16,20 @@ import shutil
 import itertools
 import logging
 import time
-from multiprocessing.dummy import Pool as ThreadPool
+import sys
+#from multiprocessing.dummy import Pool as ThreadPool
 
-logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='reddit.log',level=logging.INFO)
+logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/location/of/logs/reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user", help="Username to scan")
 parser.add_argument("--web", action="store_true", help="Output scan information in html format.")
+parser.add_argument("--skip", action="store_true", help="Add user to skip list.")
+parser.add_argument("--reset", action="store_true", help="Reset user download history.")
 
 args = parser.parse_args()
 
-homeurl = ""
+homeurl = "https://location.of.data"
 
 db = peewee.MySQLDatabase("reddit", host="localhost", user="reddit", passwd="reddit")
 
@@ -90,14 +93,6 @@ def checkDupeHash(filepath):
     raise
 
 
-def checkDupeFilename(filename):
-  try:
-    FileData.select().where(FileData.filename == filename).get()
-    return "{}: file already exists".format(filename)
-  except:
-    raise
-
-
 def verifyCreateAlbumDir(user, album):
   if not os.path.exists(user + "/albums/" + album):
     try:
@@ -112,7 +107,6 @@ def addFiletoDB(user, filename, dltype):
 
 
 def downloadFile(url, filename, user, dltype, album=None):
-
   if album is None:
     filedest = os.path.join(user + "/" + dltype + "/" + filename)
   else:
@@ -135,8 +129,8 @@ def downloadFile(url, filename, user, dltype, album=None):
         shutil.move("/tmp/" + filename, filedest)
         addFiletoDB(user, filename, dltype)
     except Exception as e:
-      logging.info("FAILED_DOWNLOAD_URL: {} EXCEPTION: {}".format(url, e))
-      if os.path.isfile("/tmp/" + filename)
+      logging.info("FAILED_DOWNLOAD_URL: {} USER: {} EXCEPTION: {}".format(url, user, e))
+      if os.path.isfile("/tmp/" + filename):
         os.remove("/tmp/" + filename)
       pass
   else:
@@ -172,7 +166,22 @@ def imgurDownload(url, user):
       if not os.path.exists(user + "/albums/" + downloader.get_album_key()):
         try:
           downloader.save_images(user + "/albums/" + downloader.get_album_key())
-          printDownload(user, "albums", downloader.get_album_key())
+          printDownload(user, "albums", downloader.get_album_key() + "/all.html")
+          allhtml = open(user + "/albums/" + downloader.get_album_key() + "/all.html", "w")
+          allhtml.write("<style>\n")
+          allhtml.write(".fixed-ratio-resize { /* basic responsive img class=\"fixed-ratio-resize\" */\n")
+          allhtml.write("        max-width: 100%;\n")
+          allhtml.write("        height: auto;\n")
+          allhtml.write("        width: auto\9; /* IE8 */\n")
+          allhtml.write("}\n")
+          allhtml.write("</style>\n")
+          allhtml.write("\n")
+          allhtml.write("<body text=\"#ffffff\" bgcolor=\"#000000\">")
+          for filename in sorted(os.listdir(user + "/albums/" + downloader.get_album_key())):
+            if "image" in subprocess.run(['file','--brief','--mime-type', user + "/albums/" + downloader.get_album_key() + "/" + filename], stdout=subprocess.PIPE).stdout.decode("utf-8"):
+              allhtml.write("<a href=" + filename + "><img class=\"fixed-ratio-resize\" src=" + filename + "></a><br>" + filename + "<hr>\n")
+          allhtml.write("</body>")
+          allhtml.close()
           logging.info("IMGUR_ALBUM_DOWNLOAD: {}".format(url))
         except Exception as e:
           logging.info("IMGUR_ALBUM_EXCEPTION: {}".format(e))
@@ -207,7 +216,14 @@ def gfycatDownload(url, user):
 
 def reddituploadsDownload(url, user):
   try:
-    downloadFile(re.sub('amp;', '', url), re.findall('.com\/(.*)\?', url)[0], user, "images")
+    html = requests.head(re.sub('amp;', '', url))
+    if "jpeg" in html.headers['content-type']:
+      filename = re.findall('.com\/(.*)\?', url)[0] + ".jpg"
+    elif "png" in html.headers['content-type']:
+      filename = re.findall('.com\/(.*)\?', url)[0] + ".png"
+    else:
+      filename = re.findall('.com\/(.*)\?', url)[0]
+    downloadFile(re.sub('amp;', '', url), filename, user, "images")
     ext = subprocess.run(['file','--brief','--mime-type', user + "/images/" + re.findall('.com\/(.*)\?', url)[0]], stdout=subprocess.PIPE)
     os.rename(user + "/images/" + re.findall('.com\/(.*)\?', url)[0], user + "/images/" + re.findall('.com\/(.*)\?', url)[0] + "." + bytes.decode(ext.stdout.split(b'\n')[0].split(b'/')[1]))
   except:
@@ -245,6 +261,22 @@ def findIndexStart(user):
     return "0"
 
 
+def deleteDateIndex(user):
+  try:
+    return UserData.select().where(UserData.user == user).get().delete_instance()
+  except:
+    return "0"
+
+
+def skipUser(user):
+  try:
+    record = UserData.select().where(UserData.user == user).get()
+    record.latest = "skip"
+    record.save()
+  except:
+    record = UserData(user=user, latest="skip").save()
+
+
 def updateLatest(user, latest):
   try:
     record = UserData.select().where(UserData.user == user).get()
@@ -252,6 +284,7 @@ def updateLatest(user, latest):
     record.save()
   except:
     record = UserData(user=user, latest=latest).save()
+
 
 def ibbcoDownload(url, user):
   html = requests.get(url)
@@ -280,7 +313,22 @@ def vidbleDownload(url, user):
   except Exception as e:
     logging.info("VIDBLE_EXCEPTION: {}".format(e))
     pass
-  
+
+
+def sendvidDownload(url, user):
+  try:
+    html = requests.get(url, timeout=10)
+    if html.ok:
+      soup = BeautifulSoup(html.content, "html5lib")
+      for meta in soup(['meta']):
+        try:
+          if meta['property'] == "og:video:secure_url":
+            downloadFile(meta['content'], meta['content'].split(r'/')[-1], user, "videos")
+        except:
+          pass
+  except:
+    pass
+
 
 def undefinedDownload(url, user):
   url = re.sub('amp;', '', url)
@@ -306,14 +354,14 @@ def undefinedDownload(url, user):
 def printDownload(user, dltype, filename, album=None):
   if album is None:
     if args.web:
-      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
-    else:
-      print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename)
-  else:
-    if args.web:
       print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
     else:
       print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + filename)
+  else:
+    if args.web:
+      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
+    else:
+      print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename)
 
 
 def splitJobs(user, url):
@@ -335,12 +383,23 @@ def splitJobs(user, url):
     ibbcoDownload(url, user)
   elif "vidble.com" in url:
     vidbleDownload(url, user)
+  elif "sendvid.com" in url:
+    sendvidDownload(url, user)
   else:
     undefinedDownload(url, user)
 
 
 timestart = time.time()
+if args.skip:
+  skipUser(args.user)
+  logging.info("ADDING_SKIP: {}".format(args.user))
+if args.reset:
+  deleteDateIndex(args.user)
+  logging.info("RESETTING_HISTORY: {}".format(args.user))
 startUTC = findIndexStart(args.user)
+if startUTC == "skip":
+  logging.info("SKIPPING: {}".format(args.user))
+  sys.exit(0)
 r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + startUTC + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
 urls = []
 while r.json()['hits']['total'] > 0:
@@ -358,11 +417,14 @@ while r.json()['hits']['total'] > 0:
   r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + str(post['_source']['created_utc']) + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
 if len(urls) > 0:
   logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
-  # https://stackoverflow.com/a/28463266
-  if __name__ == '__main__':
-    pool = ThreadPool(4)
-    pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
-    pool.close()
-    pool.join()
-    logging.info("Processing complete, took {}".format(time.time()-timestart))
+#   https://stackoverflow.com/a/28463266
+#  if __name__ == '__main__':
+#    pool = ThreadPool(4)
+#    pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
+#    pool.close()
+#    pool.join()
+#    logging.info("Processing complete, took {}".format(time.time()-timestart))
+  for url in urls:
+    splitJobs(args.user, url)
+  logging.info("Processing complete, took {}".format(time.time()-timestart))
   updateLatest(args.user, str(post['_source']['created_utc']))
