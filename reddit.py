@@ -17,19 +17,21 @@ import itertools
 import logging
 import time
 import sys
+import datetime
 #from multiprocessing.dummy import Pool as ThreadPool
 
-logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/location/of/logs/reddit.log',level=logging.INFO)
+logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/path/to/logs/reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user", help="Username to scan")
 parser.add_argument("--web", action="store_true", help="Output scan information in html format.")
 parser.add_argument("--skip", action="store_true", help="Add user to skip list.")
 parser.add_argument("--reset", action="store_true", help="Reset user download history.")
+parser.add_argument("--fullreset", action="store_true", help="Full reset user info in db.")
 
 args = parser.parse_args()
 
-homeurl = "https://location.of.data"
+homeurl = "https://your.website.com"
 
 db = peewee.MySQLDatabase("reddit", host="localhost", user="reddit", passwd="reddit")
 
@@ -57,14 +59,12 @@ def md5(fname):
       hash_md5.update(chunk)
   return hash_md5.hexdigest()
 
-
 def verifyCreateDir(user, dltype):
   if not os.path.exists(user + "/" + dltype):
     try:
       os.makedirs(user + "/" + dltype)
     except:
       pass
-
 
 def bestUrl(list1, list2, urls):
   slist1 = []
@@ -268,6 +268,15 @@ def deleteDateIndex(user):
     return "0"
 
 
+def deleteAllIndex(user):
+  try:
+    UserData.select().where(UserData.user == user).get().delete_instance()
+  except:
+    pass
+  for file in FileData.select().where(FileData.user == user):
+    file.delete_instance()
+
+
 def skipUser(user):
   try:
     record = UserData.select().where(UserData.user == user).get()
@@ -354,12 +363,12 @@ def undefinedDownload(url, user):
 def printDownload(user, dltype, filename, album=None):
   if album is None:
     if args.web:
-      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
+      print(datetime.datetime.now().strftime('%H') + ": New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + filename + "</a><br>")
     else:
       print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + filename)
   else:
     if args.web:
-      print("New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
+      print(datetime.datetime.now().strftime('%H') + ": New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
     else:
       print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename)
 
@@ -396,6 +405,9 @@ if args.skip:
 if args.reset:
   deleteDateIndex(args.user)
   logging.info("RESETTING_HISTORY: {}".format(args.user))
+if args.fullreset:
+  deleteAllIndex(args.user)
+  logging.info("FULL_RESET_HISTORY: {}".format(args.user))
 startUTC = findIndexStart(args.user)
 if startUTC == "skip":
   logging.info("SKIPPING: {}".format(args.user))
