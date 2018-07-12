@@ -59,6 +59,26 @@ def md5(fname):
       hash_md5.update(chunk)
   return hash_md5.hexdigest()
 
+#https://www.peterbe.com/plog/best-practice-with-retries-with-requests
+def requests_retry_session(
+    retries=3,
+    backoff_factor=0.3,
+    status_forcelist=(500, 502, 504),
+    session=None,
+):
+    session = session or requests.Session()
+    retry = requests.packages.urllib3.util.retry.Retry(
+        total=retries,
+        read=retries,
+        connect=retries,
+        backoff_factor=backoff_factor,
+        status_forcelist=status_forcelist,
+    )
+    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
 def verifyCreateDir(user, dltype):
   if not os.path.exists(user + "/" + dltype):
     try:
@@ -410,10 +430,26 @@ if args.fullreset:
   logging.info("FULL_RESET_HISTORY: {}".format(args.user))
 startUTC = findIndexStart(args.user)
 if startUTC == "skip":
-  logging.info("SKIPPING: {}".format(args.user))
+  if not args.web:
+    print("Skipping {}".format(args.user))
+  logging.debug("SKIPPING: {}".format(args.user))
   sys.exit(0)
-r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + startUTC + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
+
+while True:
+  try:
+    r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + startUTC + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
+    try:
+      r.json()['hits']['total']
+    except Exception as x:
+      logging.info("Error in json: {}".format(x.__class__.__name__))
+      continue
+  except Exception as x:
+    logging.info("Error connecting: {}".format(x.__class__.__name__))
+    continue
+  break
+
 urls = []
+
 while r.json()['hits']['total'] > 0:
   for post in r.json()['hits']['hits']:
     if post['_type'] == "comments":
@@ -426,7 +462,19 @@ while r.json()['hits']['total'] > 0:
         i = re.sub('[)!?,*.:]{1,3}$', '', i)
         if i not in urls:
           urls.append(i)
-  r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + str(post['_source']['created_utc']) + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
+  while True:
+    try:
+      r = requests.get('https://elastic.pushshift.io/_search/?q=(author:' + args.user + ' AND created_utc:>' + str(post['_source']['created_utc']) + ')&sort=created_utc:asc&size=100', headers={'User-Agent': 'botman 1.0'})
+      try:
+        r.json()['hits']['total']
+      except Exception as x:
+        logging.info("Error in json: {}".format(x.__class__.__name__))
+        continue
+    except Exception as x:
+      logging.info("Error connecting: {}".format(x.__class__.__name__))
+      continue
+    break
+
 if len(urls) > 0:
   logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
 #   https://stackoverflow.com/a/28463266
