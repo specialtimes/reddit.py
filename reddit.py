@@ -18,12 +18,12 @@ import logging
 import time
 import sys
 import datetime
-#from multiprocessing.dummy import Pool as ThreadPool
 
 logging.basicConfig(format='%(asctime)s|%(levelname)s|%(message)s',filename='/path/to/logs/reddit.log',level=logging.INFO)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("user", help="Username to scan")
+parser.add_argument("--info", action="store_true", help="View details regarding user.")
 parser.add_argument("--web", action="store_true", help="Output scan information in html format.")
 parser.add_argument("--skip", action="store_true", help="Add user to skip list.")
 parser.add_argument("--reset", action="store_true", help="Reset user download history.")
@@ -79,7 +79,6 @@ def bestUrl(list1, list2, urls):
         slist2.append(i2)
   return slist2[0]
 
-
 def checkDupeHash(filepath):
   filehash = md5(filepath)
   if filehash == "d835884373f4d6c8f24742ceabe74946":
@@ -92,7 +91,6 @@ def checkDupeHash(filepath):
   except:
     raise
 
-
 def verifyCreateAlbumDir(user, album):
   if not os.path.exists(user + "/albums/" + album):
     try:
@@ -100,11 +98,9 @@ def verifyCreateAlbumDir(user, album):
     except:
       pass
 
-
 def addFiletoDB(user, filename, dltype):
   filehash = md5(user + "/" + dltype + "/" + filename)
   FileData(user=user, md5=filehash, filename=filename, filetype=dltype).save()
-
 
 def downloadFile(url, filename, user, dltype, album=None):
   if album is None:
@@ -138,7 +134,6 @@ def downloadFile(url, filename, user, dltype, album=None):
       logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + filename))
     else:
       logging.info("FILE_EXISTS: {}".format(user + "/" + dltype + "/" + album + "/" + filename))
-
 
 def imgurDownload(url, user):
   vids = [ "gif", "gifv", "mp4" ]
@@ -192,7 +187,6 @@ def imgurDownload(url, user):
     logging.info("IMGUR_EXCEPTION: {}".format(e))
     pass
 
-
 def gfycatDownload(url, user):
   gfycathost = [ "giant.gfycat.com", "fat.gfycat.com", "zippy.gfycat.com", "thumbs.gfycat.com" ]
   gfycatformat = [ "mp4", "webm" ]
@@ -213,7 +207,6 @@ def gfycatDownload(url, user):
   else:
     logging.info("USER: {} URL: {} STATUS_CODE: {} REASON: {}".format(user, url, html.status_code, html.reason))
 
-
 def reddituploadsDownload(url, user):
   try:
     html = requests.head(re.sub('amp;', '', url))
@@ -229,7 +222,6 @@ def reddituploadsDownload(url, user):
   except:
     pass
 
-
 def pornhubDownload(url, user):
   html = requests.get(url)
   try:
@@ -240,7 +232,6 @@ def pornhubDownload(url, user):
         downloadFile(i['videoUrl'], re.search('[0-9]{6}/[0-9]{2}/[0-9]{9}/(.*)\?', i['videoUrl']).group(1), user, "videos")
   except:
     pass
-
 
 def eromeDownload(url, user):
   res = [ "1080", "720", "480" ]
@@ -253,20 +244,17 @@ def eromeDownload(url, user):
         if i == source['res']:
           downloadFile("https:" + source['src'], source['src'].split(r'/')[-1], user, "videos")
 
-
 def findIndexStart(user):
   try:
     return UserData.select().where(UserData.user == user).get().latest
   except:
     return "0"
 
-
 def deleteDateIndex(user):
   try:
     return UserData.select().where(UserData.user == user).get().delete_instance()
   except:
     return "0"
-
 
 def deleteAllIndex(user):
   try:
@@ -276,7 +264,6 @@ def deleteAllIndex(user):
   for file in FileData.select().where(FileData.user == user):
     file.delete_instance()
 
-
 def skipUser(user):
   try:
     record = UserData.select().where(UserData.user == user).get()
@@ -284,7 +271,6 @@ def skipUser(user):
     record.save()
   except:
     record = UserData(user=user, latest="skip").save()
-
 
 def updateLatest(user, latest):
   try:
@@ -294,7 +280,6 @@ def updateLatest(user, latest):
   except:
     record = UserData(user=user, latest=latest).save()
 
-
 def ibbcoDownload(url, user):
   html = requests.get(url)
   if html.ok:
@@ -302,7 +287,6 @@ def ibbcoDownload(url, user):
     for link in soup(['link']):
       if "image.ibb" in link.attrs['href']:
         downloadFile(link.attrs['href'], link.attrs['href'].split(r'/')[-1], user, "images")
-
 
 def vidbleDownload(url, user):
   try:
@@ -313,16 +297,23 @@ def vidbleDownload(url, user):
         downloadFile(url, url.split(r'/')[-1].split(r'.')[0] + "." + html.headers['content-type'].split(r'/')[-1], user, "images")
       else:
         soup = BeautifulSoup(html.content, "html5lib")
-        for i in soup.findAll('img'):
-          try:
-            if i.attrs['src']:
-              downloadFile("https://vidble.com" + re.sub('_(.?).', '', i.attrs['src']), re.sub('_(.?).', '', i.attrs['src']).replace("/", ""), user, "albums", url.split(r'/')[-1])
-          except:
-            pass
+        if "watch" in url:
+          for i in soup(['source']):
+            downloadFile("https://vidble.com" + i['src'], i['src'].replace("/",""), user, "videos")
+        else:
+          for i in soup.findAll('img'):
+            try:
+              if i['title'] == "vidble!":
+                continue
+            except:
+              try:
+                if i.attrs['src']:
+                  downloadFile("https://vidble.com" + re.sub('_(.?).', '', i.attrs['src']), re.sub('_(.?).', '', i.attrs['src']).replace("/", ""), user, "albums", url.split(r'/')[-1])
+              except:
+                pass
   except Exception as e:
     logging.info("VIDBLE_EXCEPTION: {}".format(e))
     pass
-
 
 def sendvidDownload(url, user):
   try:
@@ -337,7 +328,6 @@ def sendvidDownload(url, user):
           pass
   except:
     pass
-
 
 def undefinedDownload(url, user):
   url = re.sub('amp;', '', url)
@@ -359,7 +349,6 @@ def undefinedDownload(url, user):
   except:
     pass
 
-
 def printDownload(user, dltype, filename, album=None):
   if album is None:
     if args.web:
@@ -371,7 +360,6 @@ def printDownload(user, dltype, filename, album=None):
       print(datetime.datetime.now().strftime('%H') + ": New " + re.sub('s$', '', dltype) + ": <a href=" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + ">" + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename + "</a><br>")
     else:
       print("Grabbing " + homeurl + "/" + user + "/" + dltype + "/" + album + "/" + filename)
-
 
 def splitJobs(user, url):
   if "imgur" in url:
@@ -397,18 +385,46 @@ def splitJobs(user, url):
   else:
     undefinedDownload(url, user)
 
-
 timestart = time.time()
+startUTC = findIndexStart(args.user)
+if args.info:
+  print("User: {}".format(args.user))
+  if startUTC == "0":
+    print("User has not been scanned.")
+    sys.exit(0)
+  elif not startUTC == "skip":
+    print("Last Updated: {}".format(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(int(startUTC)))))
+  else:
+    print("User is configured to be skipped.")
+    sys.exit(0)
+  if os.path.isdir("~~deleted/" + args.user):
+    print("Users account is deleted from reddit.")
+    fpath = "~~deleted/" + args.user
+  else:
+    fpath = args.user    
+  print("Files in DB for user: {}".format(FileData.select().where(FileData.user == args.user).count()))
+  if os.path.isdir(fpath + "/images"):
+    print("Images: {}".format(len(os.walk(fpath + "/images/").__next__()[2])))
+  if os.path.isdir(fpath + "/videos"):
+    print("Videos: {}".format(len(os.walk(fpath + "/videos/").__next__()[2])))
+  if os.path.isdir(fpath + "/albums"):
+    print("Albums: {}".format(len(os.walk(fpath + "/albums/").__next__()[1])))
+  if len(os.walk(fpath + "/").__next__()[2]) is not 0:
+    print("Top user of these subreddits on these days:")
+    for file in os.walk(fpath + "/").__next__()[2]:
+      print("{}: {}".format(file, ", ".join(open(fpath + "/" + file).read().splitlines())))
+  sys.exit(0)
 if args.skip:
   skipUser(args.user)
   logging.info("ADDING_SKIP: {}".format(args.user))
 if args.reset:
-  deleteDateIndex(args.user)
-  logging.info("RESETTING_HISTORY: {}".format(args.user))
+  if not startUTC == "skip":
+    deleteDateIndex(args.user)
+    logging.info("RESETTING_HISTORY: {}".format(args.user))
 if args.fullreset:
-  deleteAllIndex(args.user)
-  logging.info("FULL_RESET_HISTORY: {}".format(args.user))
-startUTC = findIndexStart(args.user)
+  if not startUTC == "skip":
+    deleteAllIndex(args.user)
+    logging.info("FULL_RESET_HISTORY: {}".format(args.user))
 if startUTC == "skip":
   if not args.web:
     print("Skipping {}".format(args.user))
@@ -457,13 +473,6 @@ while r.json()['hits']['total'] > 0:
 
 if len(urls) > 0:
   logging.info("Beginning download for {} with {} discovered addresses.".format(args.user, len(urls)))
-#   https://stackoverflow.com/a/28463266
-#  if __name__ == '__main__':
-#    pool = ThreadPool(4)
-#    pool.starmap(splitJobs, zip(itertools.repeat(args.user), urls))
-#    pool.close()
-#    pool.join()
-#    logging.info("Processing complete, took {}".format(time.time()-timestart))
   for url in urls:
     splitJobs(args.user, url)
   logging.info("Processing complete, took {}".format(time.time()-timestart))
